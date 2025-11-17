@@ -1,7 +1,11 @@
-// lib/screens/chat_screen.dart
 import 'package:flutter/material.dart';
+import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;  // ← ADD FOR REST API
+import 'dart:convert';  // ← ADD FOR JSON
+
+import '../main.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 
@@ -22,10 +26,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final chatProv = Provider.of<ChatProvider>(context, listen: false);
     final me = auth.user!;
+    final senderName = auth.displayName ?? 'User';
     final chatId = chatProv.chatIdForSorted(me.uid, widget.peerUserId);
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.blue.shade300,
+          backgroundColor: Colors.blue.shade300,
           title: Text(widget.peerName)),
       body: Column(
         children: [
@@ -80,9 +85,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: TextField(
                       controller: _ctrl,
                       decoration: InputDecoration(
-                          hintText: 'Type a message', 
+                          hintText: 'Type a message',
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(20)
+                              borderRadius: BorderRadius.circular(20)
                           )),
                     ),
                   ),
@@ -91,10 +96,18 @@ class _ChatScreenState extends State<ChatScreen> {
                     onPressed: () async {
                       final text = _ctrl.text.trim();
                       if (text.isEmpty) return;
-                      await chatProv.sendMessage(chatId, me.uid, text);
+
+                      final senderName = auth.displayName ?? "User";
+
+                      // 1. Save message to Firestore (triggers real-time sync)
+                      await chatProv.sendMessage(chatId, me.uid, text, senderName);
+
+                      // 2. Send push via OneSignal REST API (permanent v5 fix)
+                      await _sendOneSignalNotification(senderName, text, chatId, widget.peerUserId);
+
                       _ctrl.clear();
                     },
-                  )
+                  ),
                 ],
               ),
             ),
@@ -102,5 +115,46 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  Future<String?> getPlayerIdFromFirestore(String peerId) async {
+    final doc = await FirebaseFirestore.instance.collection('users').doc(peerId).get();
+    return doc.data()?['playerId'];
+  }
+
+  Future<void> _sendOneSignalNotification(String senderName, String text, String chatId, String peerId) async {
+    try {
+      // Get peer's Player ID from dashboard or store it in Firestore
+      String? playerId = await getPlayerIdFromFirestore(peerId); // You need this function
+
+      if (playerId == null) {
+        print("No player ID for $peerId");
+        return;
+      }
+
+      final response = await http.post(
+        Uri.parse('https://onesignal.com/api/v1/notifications'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Basic $oneSignalRestApiKey',
+        },
+        body: jsonEncode({
+          "app_id": oneSignalAppId,
+          "include_player_ids": [playerId], // ← USE THIS
+          "headings": {"en": senderName},
+          "contents": {"en": text.length > 100 ? "${text.substring(0, 97)}..." : text},
+          "data": {"chatId": chatId, "senderName": senderName},
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final jsonResponse = jsonDecode(response.body);
+        print("OneSignal success: ${jsonResponse['recipients']} recipients");
+      } else {
+        print("Error: ${response.statusCode} - ${response.body}");
+      }
+    } catch (e) {
+      print("Send failed: $e");
+    }
   }
 }

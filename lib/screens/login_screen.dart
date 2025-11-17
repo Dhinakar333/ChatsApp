@@ -61,7 +61,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       validator: (v) =>
-                          v == null || v.isEmpty ? 'Enter email' : null,
+                          v == null || v.isEmpty ? 'Enter valid email' : null,
                     ),
                     SizedBox(height: 10),
                     TextFormField(
@@ -74,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       obscureText: true,
                       validator: (v) =>
-                          v == null || v.length < 6 ? '6+ chars' : null,
+                          v == null || v.length < 6 ? 'Enter password with at least 6 chars' : null,
                     ),
                     const SizedBox(height: 16),
             ElevatedButton(
